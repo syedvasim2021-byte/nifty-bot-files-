@@ -81,6 +81,23 @@ IC_LOTS = _int("IC_LOTS", 1)
 IC_POLL_INTERVAL_SECONDS = _int("IC_POLL_INTERVAL_SECONDS", 30)
 IC_STATE_FILE = "ic_state_nifty.json"
 
+# ---- Iron Condor strategy (SENSEX) ----
+# Completely separate from the NIFTY one above -- different exchange (BSE, not
+# NSE), different expiry day (Thursday), different entry day (Wednesday, i.e.
+# T-1 to expiry, same as NIFTY's Monday->Tuesday pattern).
+# Short strikes = spot +/- IC_SHORT_DISTANCE_SENSEX. Hedge strikes = short
+# strikes +/- IC_WING_WIDTH_SENSEX further out.
+IC_ENTRY_DAY_SENSEX = "Wednesday"
+IC_ENTRY_TIME_SENSEX = "09:30"
+IC_SQUAREOFF_DAY_SENSEX = "Thursday"
+IC_SQUAREOFF_TIME_SENSEX = "15:15"
+IC_SHORT_DISTANCE_SENSEX = _int("IC_SHORT_DISTANCE_SENSEX", 700)
+IC_WING_WIDTH_SENSEX = _int("IC_WING_WIDTH_SENSEX", 700)
+IC_LOTS_SENSEX = _int("IC_LOTS_SENSEX", 1)
+IC_POLL_INTERVAL_SECONDS_SENSEX = _int("IC_POLL_INTERVAL_SECONDS_SENSEX", 30)
+IC_STATE_FILE_SENSEX = "ic_state_sensex.json"
+SENSEX_OPTION_PREFIX = "SENSEX"  # instrument `name` filter in the BFO dump
+
 # NOTE on lot size: NSE revises index F&O lot sizes periodically (it changed at least
 # twice across 2025-2026). This bot deliberately does NOT hardcode a lot size anywhere.
 # instruments.py always reads `lot_size` fresh from the live Kite instrument dump so a

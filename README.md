@@ -141,3 +141,71 @@ methods in `risk_manager.py` still run if you call them yourself later.
 - Strategy runs on the underlying's price, not the option's own price
   action — for options-specific strategies (IV-based, Greeks-based) you'll
   need to fetch and analyze the option chain directly.
+
+## Iron Condor strategy (NIFTY) — `iron_condor_main.py`
+
+A separate, independent strategy from the breakout+retest bot above. Run it
+with its own `python iron_condor_main.py` (separate `screen` session if you
+want both strategies running at once — they don't share state).
+
+**Rules:**
+- Monday `IC_ENTRY_TIME_NIFTY` (default 09:30): capture NIFTY spot as the
+  reference. Sell CE at ref+250, sell PE at ref-250. Buy CE at ref+450 and
+  PE at ref-450 as hedges (`IC_SHORT_DISTANCE_NIFTY` / `IC_WING_WIDTH_NIFTY`
+  in `.env`, both configurable). Max loss per side is capped at the wing
+  width minus premium collected, thanks to the hedge legs.
+- If spot crosses ref+250 at any point, the call spread (short CE + hedge
+  CE) is closed immediately — the put spread keeps running independently.
+  Mirror for ref-250 on the put side.
+- Whatever is still open gets force-closed Tuesday at
+  `IC_SQUAREOFF_TIME_NIFTY` (default 15:15).
+- Position spans two calendar days, so state (reference price, which legs/
+  sides are open) is persisted to `ic_state_nifty.json`. If the bot is
+  restarted for the daily Kite re-login, it picks up exactly where it left
+  off instead of losing track of an open position.
+
+**Not yet implemented:** the holiday fallback (entering Friday afternoon if
+Monday is a trading holiday) — deliberately deferred until the core
+Monday→Tuesday flow has been watched running correctly. Right now, if
+Monday is a holiday, the bot will simply not find an entry condition that
+day and nothing will happen — check `logs/bot.log` if a Monday goes by with
+no entry logged.
+
+**Operational note:** because this position runs overnight, the daily Kite
+login (access tokens expire ~6 AM) needs to happen on *both* Monday morning
+(for entry) and Tuesday morning (to keep monitoring/square-off working) —
+you need to be available to complete the manual login step on both days.
+
+**Sensex version:** not yet built — same structure, different index/expiry
+day/point distances (Wednesday entry, Thursday exit, ±700 points). Ask for
+it once the NIFTY version has been validated.
+
+## Iron Condor strategy (SENSEX) — `sensex_main.py`
+
+Fully independent from `iron_condor_main.py` (NIFTY) — separate files
+(`sensex_instruments.py`, `sensex_executor.py`), separate state file
+(`ic_state_sensex.json`), separate screen session. Run with its own
+`python sensex_main.py`.
+
+**Key differences from the NIFTY version:**
+- Trades on **BSE** (exchange code `BFO`), not NSE — SENSEX options don't
+  exist on NFO.
+- Entry: **Wednesday** 09:30 (`IC_ENTRY_TIME_SENSEX`). Square-off:
+  **Thursday** 15:15 (`IC_SQUAREOFF_TIME_SENSEX`) — SENSEX's weekly expiry
+  day is Thursday (vs NIFTY's Tuesday), so this follows the same T-1-to-
+  expiry pattern.
+- Short strikes = spot ± `IC_SHORT_DISTANCE_SENSEX` (default 700). Hedge
+  strikes = short strikes ± `IC_WING_WIDTH_SENSEX` further out (default
+  700, i.e. hedge sits at spot ± 1400).
+- Same partial-exit rule as NIFTY: a breached side closes on its own, the
+  other side keeps running until its own breach or Thursday square-off.
+
+**Before going live**, confirm the BFO segment is activated on your Zerodha
+account (Console → segment activation) — orders fail with a clear error if
+it isn't, but it's worth checking ahead of time.
+
+**Operational note**: same daily-login requirement as NIFTY, but on
+Wednesday and Thursday instead of Monday and Tuesday. If you're running
+both strategies, that's 4 days a week (Mon, Tue, Wed, Thu) you need to be
+available for the login step — Friday through Sunday, neither bot needs
+you.
