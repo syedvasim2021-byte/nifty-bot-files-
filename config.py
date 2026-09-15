@@ -66,6 +66,21 @@ DRY_RUN = _bool("DRY_RUN", True)
 MARKET_OPEN = "09:15"
 MARKET_CLOSE = "15:30"
 
+# ---- Iron Condor strategy (NIFTY) ----
+# Entry: Monday at IC_ENTRY_TIME_NIFTY. Short strikes = spot +/- IC_SHORT_DISTANCE_NIFTY.
+# Hedge (long) strikes = short strikes +/- IC_WING_WIDTH_NIFTY further out (caps max loss).
+# Exit: a side closes the moment spot crosses its short strike; whatever remains open
+# is force-closed on Tuesday at IC_SQUAREOFF_TIME_NIFTY.
+IC_ENTRY_DAY_NIFTY = "Monday"
+IC_ENTRY_TIME_NIFTY = "09:30"
+IC_SQUAREOFF_DAY_NIFTY = "Tuesday"
+IC_SQUAREOFF_TIME_NIFTY = "15:15"
+IC_SHORT_DISTANCE_NIFTY = _int("IC_SHORT_DISTANCE_NIFTY", 250)
+IC_WING_WIDTH_NIFTY = _int("IC_WING_WIDTH_NIFTY", 200)
+IC_LOTS = _int("IC_LOTS", 1)
+IC_POLL_INTERVAL_SECONDS = _int("IC_POLL_INTERVAL_SECONDS", 30)
+IC_STATE_FILE = "ic_state_nifty.json"
+
 # NOTE on lot size: NSE revises index F&O lot sizes periodically (it changed at least
 # twice across 2025-2026). This bot deliberately does NOT hardcode a lot size anywhere.
 # instruments.py always reads `lot_size` fresh from the live Kite instrument dump so a
