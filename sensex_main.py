@@ -1,21 +1,22 @@
 """
-Iron Condor strategy for SENSEX -- mirrors iron_condor_main.py (NIFTY) but:
-  - Entry: Wednesday 09:30 (config.IC_ENTRY_DAY_SENSEX / IC_ENTRY_TIME_SENSEX)
-  - Square-off: Thursday 15:15 (SENSEX's weekly expiry day, BSE)
-  - Short strikes = spot +/- IC_SHORT_DISTANCE_SENSEX (default 700)
-  - Hedge strikes = short strikes +/- IC_WING_WIDTH_SENSEX further out (default 700)
-  - Uses sensex_instruments.py / sensex_executor.py (BFO exchange), not the
-    NIFTY ic_instruments.py / ic_executor.py (NFO exchange)
-  - Separate state file (config.IC_STATE_FILE_SENSEX) so this cannot collide
-    with the NIFTY Iron Condor's state
+Iron Condor strategy for SENSEX -- Option 2 design (single-day monitoring).
+Mirrors iron_condor_main.py (NIFTY) exactly, except:
+  - Entry day: Wednesday (config.IC_ENTRY_DAY_SENSEX)
+  - Uses sensex_instruments.py / sensex_executor.py (BFO exchange)
+  - Separate state file (config.IC_STATE_FILE_SENSEX)
 
-Run this in its OWN screen session, separate from iron_condor_main.py --
-they are independent strategies with independent state.
+For the REST OF WEDNESDAY ONLY: breach checks run against live LTP. At
+Wednesday's market close, monitoring STOPS -- no Thursday login, no
+Thursday breach checks, no forced square-off. Whatever remains open
+settles automatically at expiry (Thursday, cash-settled) via the exchange.
+Same trade-off as NIFTY: theoretical max loss (from the hedge) is
+unchanged, but an early exit that might have capped a smaller realized
+loss on a Monday-breach-continues-Tuesday-style move is given up, in
+exchange for needing only 1 login/week instead of 2. Decided on explicitly.
 
 Run with:
     python sensex_main.py
-Start with DRY_RUN=true (the default) and watch it through at least one full
-Wednesday->Thursday cycle before ever going live.
+Start with DRY_RUN=true (the default).
 """
 import json
 import os
@@ -30,6 +31,8 @@ from auth import get_kite_session
 from logger_setup import get_logger
 
 log = get_logger("iron_condor_sensex")
+
+INACTIVE_SLEEP_SECONDS = 1800  # 30 min
 
 
 def _load_state() -> dict:
@@ -51,13 +54,14 @@ def _in_market_hours(now: datetime) -> bool:
     return config.MARKET_OPEN <= hhmm <= config.MARKET_CLOSE
 
 
+def _is_active_window(now: datetime) -> bool:
+    return now.strftime("%A") == config.IC_ENTRY_DAY_SENSEX and _in_market_hours(now)
+
+
 def _try_entry(kite, state: dict, now: datetime) -> dict:
-    weekday = now.strftime("%A")
     today_str = now.date().isoformat()
     hhmm = now.strftime("%H:%M")
 
-    if weekday != config.IC_ENTRY_DAY_SENSEX:
-        return state
     if hhmm < config.IC_ENTRY_TIME_SENSEX:
         return state
     if state.get("entry_date") == today_str:
@@ -80,7 +84,8 @@ def _try_entry(kite, state: dict, now: datetime) -> dict:
     return new_state
 
 
-def _manage_open_position(kite, state: dict, now: datetime) -> dict:
+def _manage_open_position(kite, state: dict) -> dict:
+    """Breach checks only. Runs only during Wednesday market hours."""
     if state.get("status") != "OPEN":
         return state
 
@@ -104,22 +109,8 @@ def _manage_open_position(kite, state: dict, now: datetime) -> dict:
         state["put_side_open"] = False
         changed = True
 
-    weekday = now.strftime("%A")
-    hhmm = now.strftime("%H:%M")
-    if weekday == config.IC_SQUAREOFF_DAY_SENSEX and hhmm >= config.IC_SQUAREOFF_TIME_SENSEX:
-        if state["call_side_open"]:
-            log.info("SENSEX forced square-off (call side)")
-            sensex_executor.exit_call_side(kite, legs, config.IC_LOTS_SENSEX, "SQUARE_OFF")
-            state["call_side_open"] = False
-            changed = True
-        if state["put_side_open"]:
-            log.info("SENSEX forced square-off (put side)")
-            sensex_executor.exit_put_side(kite, legs, config.IC_LOTS_SENSEX, "SQUARE_OFF")
-            state["put_side_open"] = False
-            changed = True
-
     if not state["call_side_open"] and not state["put_side_open"]:
-        log.info("SENSEX: both sides closed. Cycle complete, back to FLAT.")
+        log.info("SENSEX: both sides closed (breached) before Wednesday's close. Back to FLAT.")
         state = {"status": "FLAT"}
         changed = True
 
@@ -129,12 +120,13 @@ def _manage_open_position(kite, state: dict, now: datetime) -> dict:
 
 
 def run():
-    log.info(f"Starting SENSEX Iron Condor bot. Mode: {'DRY_RUN (simulation)' if config.DRY_RUN else 'LIVE'}")
+    log.info(f"Starting SENSEX Iron Condor bot (single-day monitoring). Mode: {'DRY_RUN (simulation)' if config.DRY_RUN else 'LIVE'}")
     if not config.DRY_RUN:
         log.warning(
-            "LIVE mode: real orders will be sent with real money, across a "
-            "Wednesday->Thursday overnight position on BFO. Confirm static IP / "
-            "Algo-ID registration and margin availability before proceeding."
+            "LIVE mode: real orders will be sent with real money. Remember: any "
+            "position still open at Wednesday's close is UNMONITORED until "
+            "expiry -- the exchange settles it automatically, but the bot will "
+            "not react to further adverse moves on Thursday. Deliberate choice."
         )
 
     state = _load_state()
@@ -142,31 +134,46 @@ def run():
 
     kite = None
     last_session_date = None
+    was_active = False
 
     while True:
         try:
             now = datetime.now()
-            today = now.date()
+            active = _is_active_window(now)
 
+            if not active:
+                if state.get("status") == "OPEN":
+                    log.info(
+                        "Entry day's market hours have ended with no forced "
+                        "square-off (by design). Resetting to FLAT for next "
+                        "week -- any remaining legs settle automatically at expiry."
+                    )
+                    state = {"status": "FLAT"}
+                    _save_state(state)
+                if was_active:
+                    log.info(f"Leaving active window. Next login needed: {config.IC_ENTRY_DAY_SENSEX} market hours.")
+                was_active = False
+                kite = None
+                time.sleep(INACTIVE_SLEEP_SECONDS)
+                continue
+
+            was_active = True
+            today = now.date()
             if kite is None or today != last_session_date:
                 kite = get_kite_session()
                 last_session_date = today
 
-            if _in_market_hours(now):
-                state = _try_entry(kite, state, now)
-                state = _manage_open_position(kite, state, now)
-                time.sleep(config.IC_POLL_INTERVAL_SECONDS_SENSEX)
-            else:
-                log.info(f"Outside market hours (state={state.get('status')}). Sleeping...")
-                time.sleep(300)
+            state = _try_entry(kite, state, now)
+            state = _manage_open_position(kite, state)
+            time.sleep(config.IC_POLL_INTERVAL_SECONDS_SENSEX)
 
         except KeyboardInterrupt:
             log.info("Stopped by user (Ctrl+C).")
             if state.get("status") == "OPEN":
                 log.warning(
-                    "A SENSEX Iron Condor position is still open in state file "
+                    f"A SENSEX Iron Condor position is still open in state file "
                     f"({config.IC_STATE_FILE_SENSEX}). Restarting the bot will "
-                    "resume monitoring it -- it is NOT auto-closed by stopping the script."
+                    "resume monitoring it if still within Wednesday's market hours."
                 )
             sys.exit(0)
         except Exception as e:
