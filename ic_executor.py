@@ -4,6 +4,12 @@ side (2 legs) or both sides. Goes through the same DRY_RUN-aware pattern as
 executor.py -- every order is logged and journaled, and nothing real is sent
 to the exchange unless DRY_RUN=false.
 
+Uses product=NRML (not MIS): this position is deliberately held overnight
+(Monday->Tuesday). MIS positions get force-squared-off by the broker's RMS
+before market close the same day, which would silently break the whole
+overnight-hold design. NRML requires more margin than MIS, so confirm
+sufficient margin is available before going live.
+
 Leg order on entry: the HEDGE (long) leg of each side is placed before the
 SHORT leg, so the position is never briefly naked from a margin/risk
 standpoint, even for the few seconds between the two calls.
@@ -33,7 +39,7 @@ def _place_leg(kite: KiteConnect, tradingsymbol: str, lots: int, lot_size: int, 
         tradingsymbol=tradingsymbol,
         transaction_type=transaction_type,
         quantity=qty,
-        product=kite.PRODUCT_MIS,
+        product=kite.PRODUCT_NRML,
         order_type=kite.ORDER_TYPE_MARKET,
         market_protection=MARKET_PROTECTION,
     )

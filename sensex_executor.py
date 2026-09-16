@@ -2,6 +2,12 @@
 SENSEX equivalent of ic_executor.py -- identical logic, but orders go to the
 BFO (BSE F&O) exchange segment instead of NFO. Kept as a separate file so it
 can never accidentally affect the NIFTY executor.
+
+Uses product=NRML (not MIS): this position is deliberately held overnight
+(Wednesday->Thursday). MIS positions get force-squared-off by the broker's
+RMS before market close the same day, which would silently break the whole
+overnight-hold design. NRML requires more margin than MIS, so confirm
+sufficient margin is available before going live.
 """
 from kiteconnect import KiteConnect
 
@@ -28,7 +34,7 @@ def _place_leg(kite: KiteConnect, tradingsymbol: str, lots: int, lot_size: int, 
         tradingsymbol=tradingsymbol,
         transaction_type=transaction_type,
         quantity=qty,
-        product=kite.PRODUCT_MIS,
+        product=kite.PRODUCT_NRML,
         order_type=kite.ORDER_TYPE_MARKET,
         market_protection=MARKET_PROTECTION,
     )
